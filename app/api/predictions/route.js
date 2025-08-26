@@ -1,9 +1,13 @@
 import { NextResponse } from 'next/server';
 import Replicate from 'replicate';
+import { getServerSession } from 'next-auth/next';
+import { PrismaClient } from '../../generated/prisma';
 
 const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN,
 });
+
+const prisma = new PrismaClient();
 
 // Prevent Next.js / Vercel from caching responses
 // See https://github.com/replicate/replicate-javascript/issues/136#issuecomment-1728053102
@@ -24,11 +28,42 @@ export async function POST(request) {
     );
   }
 
-  const { prompt } = await request.json();
+  const { prompt, userId } = await request.json();
+
+  // Get user session
+  const session = await getServerSession();
+  if (!session || !session.user) {
+    return NextResponse.json({ detail: 'Authentication required' }, { status: 401 });
+  }
+
+  // Get user from database
+  const user = await prisma.user.findUnique({
+    where: { email: session.user.email }
+  });
+
+  if (!user) {
+    return NextResponse.json({ detail: 'User not found' }, { status: 404 });
+  }
+
+  // Check if user has credits
+  if (user.credits <= 0) {
+    return NextResponse.json({ detail: 'Insufficient credits' }, { status: 402 });
+  }
 
   const options = {
-    model: 'black-forest-labs/flux-schnell',
-    input: { prompt }
+    version: '16fe80f481f289b423395181cb81f78a3e88018962e689157dcfeba15f149e2a',
+    input: { 
+      prompt: `omani, ${prompt}`,  // Always prepend the trigger word
+      model: "dev",
+      lora_scale: 1,
+      num_outputs: 1,
+      aspect_ratio: "1:1",
+      output_format: "webp",
+      guidance_scale: 3,
+      output_quality: 80,
+      prompt_strength: 0.8,
+      num_inference_steps: 28
+    }
   }
 
   if (WEBHOOK_HOST) {
@@ -41,6 +76,21 @@ export async function POST(request) {
   if (prediction?.error) {
     return NextResponse.json({ detail: prediction.error }, { status: 500 });
   }
+
+  // Deduct 1 credit from user and save generation
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: user.id },
+      data: { credits: { decrement: 1 } }
+    }),
+    prisma.generation.create({
+      data: {
+        userId: user.id,
+        prompt: prompt,
+        status: 'processing'
+      }
+    })
+  ]);
 
   return NextResponse.json(prediction, { status: 201 });
 }

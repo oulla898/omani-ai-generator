@@ -1,4 +1,10 @@
 import "../styles/globals.css";
+import { Providers } from './providers'
+
+export const metadata = {
+  title: "Omani Traditional Clothing Generator",
+  description: "Generate authentic Omani traditional clothing images using AI",
+};
 
 export default function RootLayout({
   // Layouts must accept a children prop.
@@ -7,7 +13,15 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <head>
+        <title>{metadata.title}</title>
+        <meta name="description" content={metadata.description} />
+      </head>
+      <body>
+        <Providers>
+          {children}
+        </Providers>
+      </body>
     </html>
   )
 }
